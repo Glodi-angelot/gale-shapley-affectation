@@ -29,9 +29,14 @@ from PyQt5.QtWidgets import (
     QLineEdit,
     QFrame,
     QSizePolicy,
+    QProgressBar,
 )
 
 
+# Représente un étudiant avec :
+# - un nom/identifiant
+# - un profil disciplinaire
+# - un score académique
 @dataclass
 class Student:
     name: str
@@ -39,12 +44,16 @@ class Student:
     score: int
 
 
+# Représente une université (ou filière) avec :
+# - un nom
+# - une spécialité dominante
 @dataclass
 class University:
     name: str
     specialty: str
 
 
+# Liste des profils possibles pour les étudiants.
 PROFILES = [
     "Informatique",
     "Mathématiques",
@@ -56,6 +65,7 @@ PROFILES = [
     "Arts",
 ]
 
+# Liste de base des universités/spécialités utilisées dans la simulation.
 UNIVERSITY_POOL = [
     ("UNIKIN", "Informatique"),
     ("UNILU", "Mathématiques"),
@@ -75,6 +85,9 @@ UNIVERSITY_POOL = [
     ("UNIBU", "Gestion"),
 ]
 
+# Pour chaque profil étudiant, on définit un ordre de priorité
+# des spécialités universitaires. Cela sert à construire
+# des préférences réalistes côté étudiants.
 PROFILE_PRIORITY = {
     "Informatique": ["Informatique", "Mathématiques", "Statistique", "Gestion", "Communication", "Pédagogie", "Santé", "Arts"],
     "Mathématiques": ["Mathématiques", "Statistique", "Informatique", "Pédagogie", "Gestion", "Communication", "Santé", "Arts"],
@@ -87,7 +100,7 @@ PROFILE_PRIORITY = {
 }
 
 
-# Génère une population d'étudiants avec profil et score.
+# Génère une liste de n étudiants.
 def generate_students(n: int) -> List[Student]:
     students: List[Student] = []
     for i in range(1, n + 1):
@@ -97,7 +110,7 @@ def generate_students(n: int) -> List[Student]:
     return students
 
 
-# Génère la liste des universités utilisées dans la simulation.
+# Génère une liste de n universités.
 def generate_universities(n: int) -> List[University]:
     selected = UNIVERSITY_POOL[:]
     while len(selected) < n:
@@ -106,7 +119,7 @@ def generate_universities(n: int) -> List[University]:
     return [University(name=name, specialty=specialty) for name, specialty in selected[:n]]
 
 
-# Préférences des étudiants : priorité aux universités proches de leur profil.
+# Construit les préférences des étudiants sur les universités.
 def build_student_preferences(students: List[Student], universities: List[University]) -> Dict[str, List[str]]:
     preferences: Dict[str, List[str]] = {}
     for student in students:
@@ -121,7 +134,7 @@ def build_student_preferences(students: List[Student], universities: List[Univer
     return preferences
 
 
-# Préférences des universités : priorité au bon profil puis au score.
+# Construit les préférences des universités sur les étudiants.
 def build_university_preferences(students: List[Student], universities: List[University]) -> Dict[str, List[str]]:
     preferences: Dict[str, List[str]] = {}
     for university in universities:
@@ -137,11 +150,12 @@ def build_university_preferences(students: List[Student], universities: List[Uni
     return preferences
 
 
-# Implémentation de Gale-Shapley côté étudiants proposants.
+# Implémentation principale de l'algorithme de Gale-Shapley.
+# Cette version retourne uniquement l'appariement et le nombre de propositions.
 def gale_shapley(student_prefs: Dict[str, List[str]], uni_prefs: Dict[str, List[str]]) -> Tuple[Dict[str, str], int]:
     free_students = list(student_prefs.keys())
     next_choice_index = {s: 0 for s in student_prefs}
-    engagements: Dict[str, str] = {}  # université -> étudiant
+    engagements: Dict[str, str] = {}
     proposals = 0
 
     uni_rank = {
@@ -151,6 +165,7 @@ def gale_shapley(student_prefs: Dict[str, List[str]], uni_prefs: Dict[str, List[
 
     while free_students:
         student = free_students.pop(0)
+
         if next_choice_index[student] >= len(student_prefs[student]):
             continue
 
@@ -172,7 +187,66 @@ def gale_shapley(student_prefs: Dict[str, List[str]], uni_prefs: Dict[str, List[
     return matching, proposals
 
 
-# Détecte les éventuelles paires bloquantes après l'affectation.
+# Variante instrumentée de Gale-Shapley.
+# Elle conserve la même logique, mais produit aussi une chronologie textuelle.
+def gale_shapley_with_trace(
+    student_prefs: Dict[str, List[str]],
+    uni_prefs: Dict[str, List[str]],
+) -> Tuple[Dict[str, str], int, List[str]]:
+    free_students = list(student_prefs.keys())
+    next_choice_index = {s: 0 for s in student_prefs}
+    engagements: Dict[str, str] = {}
+    proposals = 0
+    trace: List[str] = []
+
+    uni_rank = {
+        u: {student: rank for rank, student in enumerate(pref_list)}
+        for u, pref_list in uni_prefs.items()
+    }
+
+    trace.append("Début de l'algorithme de Gale-Shapley")
+    trace.append("Tous les étudiants sont initialement libres.\n")
+
+    while free_students:
+        student = free_students.pop(0)
+
+        if next_choice_index[student] >= len(student_prefs[student]):
+            trace.append(f"{student} a déjà proposé à toutes les universités.")
+            continue
+
+        university = student_prefs[student][next_choice_index[student]]
+        next_choice_index[student] += 1
+        proposals += 1
+
+        trace.append(f"{student} propose à {university}.")
+
+        if university not in engagements:
+            engagements[university] = student
+            trace.append(f"{university} est libre et accepte provisoirement {student}.\n")
+        else:
+            current_student = engagements[university]
+            trace.append(f"{university} est déjà engagée avec {current_student}.")
+            if uni_rank[university][student] < uni_rank[university][current_student]:
+                engagements[university] = student
+                free_students.append(current_student)
+                trace.append(
+                    f"{university} préfère {student} à {current_student}. "
+                    f"{current_student} est rejeté et redevient libre.\n"
+                )
+            else:
+                free_students.append(student)
+                trace.append(
+                    f"{university} conserve {current_student}. "
+                    f"{student} est rejeté et redevient libre.\n"
+                )
+
+    matching = {student: university for university, student in engagements.items()}
+    trace.append("Fin de l'algorithme.")
+    trace.append("Appariement stable obtenu.")
+    return matching, proposals, trace
+
+
+# Recherche les paires bloquantes dans un appariement donné.
 def find_blocking_pairs(
     matching: Dict[str, str],
     student_prefs: Dict[str, List[str]],
@@ -185,19 +259,24 @@ def find_blocking_pairs(
     }
 
     blocking_pairs: List[Tuple[str, str]] = []
+
     for student, current_uni in matching.items():
         preferred_unis = student_prefs[student][: student_prefs[student].index(current_uni)]
+
         for uni in preferred_unis:
             current_student_at_uni = reverse_matching.get(uni)
+
             if current_student_at_uni is None:
                 blocking_pairs.append((student, uni))
                 continue
+
             if uni_rank[uni][student] < uni_rank[uni][current_student_at_uni]:
                 blocking_pairs.append((student, uni))
+
     return blocking_pairs
 
 
-# Mesures simples pour le résumé analytique.
+# Calcule quelques indicateurs de satisfaction.
 def satisfaction_stats(matching: Dict[str, str], student_prefs: Dict[str, List[str]]) -> Dict[str, float]:
     total = len(matching) if matching else 1
     first = 0
@@ -207,6 +286,7 @@ def satisfaction_stats(matching: Dict[str, str], student_prefs: Dict[str, List[s
     for student, university in matching.items():
         rank = student_prefs[student].index(university) + 1
         ranks.append(rank)
+
         if rank == 1:
             first += 1
         if rank <= 3:
@@ -233,6 +313,7 @@ class TableFactory:
         table.setSelectionBehavior(QTableWidget.SelectRows)
         table.setShowGrid(True)
         table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
         table.setStyleSheet(
             """
             QTableWidget {
@@ -307,6 +388,7 @@ class MainWindow(QMainWindow):
         self.uni_prefs: Dict[str, List[str]] = {}
         self.matching: Dict[str, str] = {}
         self.last_proposals: int = 0
+        self.trace_steps: List[str] = []
 
         self._build_ui()
         self.generate_dataset()
@@ -393,6 +475,17 @@ class MainWindow(QMainWindow):
                 color: white;
                 font-weight: 700;
             }
+            QProgressBar {
+                border: 1px solid #cfd9e3;
+                border-radius: 8px;
+                text-align: center;
+                background: #ffffff;
+                height: 24px;
+            }
+            QProgressBar::chunk {
+                background-color: #2c618f;
+                border-radius: 8px;
+            }
             """
         )
 
@@ -451,6 +544,9 @@ class MainWindow(QMainWindow):
         btn_generate = QPushButton("Générer les données")
         btn_generate.clicked.connect(self.generate_dataset)
 
+        btn_example = QPushButton("Charger un exemple simple")
+        btn_example.clicked.connect(self.load_simple_example)
+
         btn_run = QPushButton("Lancer l'affectation")
         btn_run.clicked.connect(self.run_algorithm)
 
@@ -471,6 +567,7 @@ class MainWindow(QMainWindow):
             self.seed_input,
             self.theme_combo,
             btn_generate,
+            btn_example,
             btn_run,
             btn_reset,
             btn_export,
@@ -482,7 +579,6 @@ class MainWindow(QMainWindow):
         layout.addStretch(1)
         return box
 
-    # Barre de synthèse horizontale à la place de l'ancien tableau de bord.
     def _build_summary_bar(self) -> QWidget:
         frame = QFrame()
         layout = QHBoxLayout(frame)
@@ -563,6 +659,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self._wrap_widget(self.result_table), "Résultats")
         self.tabs.addTab(self._build_stability_tab(), "Stabilité")
         self.tabs.addTab(self._build_synthesis_tab(), "Synthèse")
+        self.tabs.addTab(self._build_trace_tab(), "Chronologie")
 
         layout.addWidget(self.tabs)
         return panel
@@ -574,7 +671,6 @@ class MainWindow(QMainWindow):
         layout.addWidget(widget)
         return container
 
-    # Onglet stabilité enrichi : message explicite + tableau.
     def _build_stability_tab(self) -> QWidget:
         container = QWidget()
         layout = QVBoxLayout(container)
@@ -591,11 +687,11 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.blocking_table, 1)
         return container
 
-    # Onglet synthèse pour la soutenance.
     def _build_synthesis_tab(self) -> QWidget:
         container = QWidget()
         layout = QVBoxLayout(container)
         layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(12)
 
         self.summary_global = QTextEdit()
         self.summary_global.setReadOnly(True)
@@ -603,11 +699,65 @@ class MainWindow(QMainWindow):
             "background:#ffffff; border:1px solid #dbe4ee; border-radius:10px; padding:10px;"
         )
 
+        visual_box = QGroupBox("Synthèse visuelle")
+        visual_layout = QVBoxLayout(visual_box)
+
+        self.visual_first_label = QLabel("Premier choix : 0%")
+        self.visual_first_bar = QProgressBar()
+        self.visual_first_bar.setRange(0, 100)
+        self.visual_first_bar.setValue(0)
+
+        self.visual_top3_label = QLabel("Trois premiers choix : 0%")
+        self.visual_top3_bar = QProgressBar()
+        self.visual_top3_bar.setRange(0, 100)
+        self.visual_top3_bar.setValue(0)
+
+        self.visual_completion_label = QLabel("Taux d'affectation : 0%")
+        self.visual_completion_bar = QProgressBar()
+        self.visual_completion_bar.setRange(0, 100)
+        self.visual_completion_bar.setValue(0)
+
+        self.visual_status_label = QLabel("Statut : aucune exécution")
+        self.visual_status_label.setStyleSheet("font-weight:700; color:#173b56;")
+
+        visual_layout.addWidget(self.visual_first_label)
+        visual_layout.addWidget(self.visual_first_bar)
+        visual_layout.addWidget(self.visual_top3_label)
+        visual_layout.addWidget(self.visual_top3_bar)
+        visual_layout.addWidget(self.visual_completion_label)
+        visual_layout.addWidget(self.visual_completion_bar)
+        visual_layout.addWidget(self.visual_status_label)
+
+        layout.addWidget(visual_box)
         layout.addWidget(self.summary_global)
+        return container
+
+    def _build_trace_tab(self) -> QWidget:
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(10)
+
+        info = QLabel(
+            "Cet onglet présente le déroulement détaillé de l'algorithme : "
+            "propositions, acceptations provisoires, rejets et appariement final."
+        )
+        info.setWordWrap(True)
+        info.setStyleSheet(
+            "background:#eef5fb; border:1px solid #dbe4ee; border-radius:10px; padding:10px; color:#173b56; font-weight:600;"
+        )
+
+        self.trace_text = QTextEdit()
+        self.trace_text.setReadOnly(True)
+        self.trace_text.setPlainText("Aucune exécution effectuée pour le moment.")
+
+        layout.addWidget(info)
+        layout.addWidget(self.trace_text)
         return container
 
     def generate_dataset(self):
         seed_text = self.seed_input.text().strip()
+
         if seed_text:
             try:
                 random.seed(int(seed_text))
@@ -617,15 +767,20 @@ class MainWindow(QMainWindow):
             random.seed()
 
         n = self.count_spin.value()
+
         self.students = generate_students(n)
         self.universities = generate_universities(n)
         self.student_prefs = build_student_preferences(self.students, self.universities)
         self.uni_prefs = build_university_preferences(self.students, self.universities)
+
         self.matching = {}
         self.last_proposals = 0
+        self.trace_steps = []
 
         self.populate_all_tables()
         self.update_summary_bar()
+        self.update_visual_summary()
+        self.trace_text.setPlainText("Aucune exécution effectuée pour le moment.")
         self.stability_banner.setText(
             "Jeu de données prêt. Lancez l'affectation pour vérifier la stabilité de l'appariement."
         )
@@ -633,6 +788,51 @@ class MainWindow(QMainWindow):
         self.analysis_text.setPlainText(
             "Jeu de données généré avec succès.\n\n"
             "Vous pouvez maintenant examiner les profils, les préférences, puis lancer l'algorithme de Gale-Shapley afin d'obtenir une affectation stable et analysable."
+        )
+
+    # Charge un exemple pédagogique simple et déterministe
+    def load_simple_example(self):
+        self.students = [
+            Student("E1", "Informatique", 85),
+            Student("E2", "Mathématiques", 78),
+            Student("E3", "Gestion", 74),
+            Student("E4", "Communication", 72),
+        ]
+
+        self.universities = [
+            University("U1", "Informatique"),
+            University("U2", "Mathématiques"),
+            University("U3", "Gestion"),
+            University("U4", "Communication"),
+        ]
+
+        self.student_prefs = {
+            "E1": ["U1", "U2", "U3", "U4"],
+            "E2": ["U2", "U1", "U3", "U4"],
+            "E3": ["U3", "U2", "U4", "U1"],
+            "E4": ["U4", "U3", "U2", "U1"],
+        }
+
+        self.uni_prefs = {
+            "U1": ["E1", "E2", "E3", "E4"],
+            "U2": ["E2", "E1", "E3", "E4"],
+            "U3": ["E3", "E2", "E4", "E1"],
+            "U4": ["E4", "E3", "E2", "E1"],
+        }
+
+        self.matching = {}
+        self.last_proposals = 0
+        self.trace_steps = []
+
+        self.populate_all_tables()
+        self.update_summary_bar()
+        self.update_visual_summary()
+        self.trace_text.setPlainText("Exemple simple chargé. Lancez l'affectation pour voir le déroulement détaillé.")
+        self.stability_banner.setText("Exemple simple chargé. Lancez l'affectation pour vérifier la stabilité.")
+        self.summary_global.setPlainText("Exemple simple chargé. Aucune exécution effectuée pour le moment.")
+        self.analysis_text.setPlainText(
+            "Exemple simple chargé avec succès.\n\n"
+            "Ce mode permet de tester l'algorithme sur un petit cas pédagogique et de suivre plus facilement la chronologie des propositions."
         )
 
     def populate_all_tables(self):
@@ -700,6 +900,7 @@ class MainWindow(QMainWindow):
         lines = ["Répartition des profils présents dans l'instance :", ""]
         for profile in sorted(grouped.keys()):
             lines.append(f"- {profile} : {grouped[profile]} étudiant(s)")
+
         self.profile_info.setPlainText("\n".join(lines))
 
     def run_algorithm(self):
@@ -707,7 +908,10 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Données manquantes", "Veuillez d'abord générer ou charger un jeu de données.")
             return
 
-        self.matching, self.last_proposals = gale_shapley(self.student_prefs, self.uni_prefs)
+        self.matching, self.last_proposals, self.trace_steps = gale_shapley_with_trace(
+            self.student_prefs, self.uni_prefs
+        )
+
         blocking_pairs = find_blocking_pairs(self.matching, self.student_prefs, self.uni_prefs)
         stats = satisfaction_stats(self.matching, self.student_prefs)
 
@@ -715,6 +919,8 @@ class MainWindow(QMainWindow):
         self._fill_blocking_table(blocking_pairs)
         self.update_summary_bar(stats, blocking_pairs)
         self.update_global_summary(stats, blocking_pairs)
+        self.update_visual_summary(stats, blocking_pairs)
+        self.trace_text.setPlainText("\n".join(self.trace_steps))
 
         if not blocking_pairs:
             self.stability_banner.setText(
@@ -738,19 +944,18 @@ class MainWindow(QMainWindow):
         ]
 
         if not blocking_pairs:
-            analysis.append(
-                "Affectation terminée avec succès — appariement stable obtenu."
-            )
+            analysis.append("Affectation terminée avec succès — appariement stable obtenu.")
         else:
-            analysis.append(
-                "Attention : des paires bloquantes ont été détectées."
-            )
+            analysis.append("Attention : des paires bloquantes ont été détectées.")
 
         analysis.extend([
             "",
             "Lecture du résultat :",
             "Comme les étudiants sont les proposants, la solution obtenue leur est la plus favorable parmi les appariements stables possibles.",
+            "",
+            "Une chronologie détaillée de l'exécution est disponible dans l'onglet Chronologie.",
         ])
+
         self.analysis_text.setPlainText("\n".join(analysis))
         QMessageBox.information(self, "Exécution terminée", "L'affectation a été calculée avec succès.")
 
@@ -779,6 +984,7 @@ class MainWindow(QMainWindow):
 
     def update_global_summary(self, stats: Dict[str, float], blocking_pairs: List[Tuple[str, str]]):
         stable_text = "STABLE" if not blocking_pairs else "INSTABLE"
+
         text = (
             "AFFECTATION TERMINÉE\n\n"
             f"- Étudiants : {len(self.students)}\n"
@@ -791,15 +997,55 @@ class MainWindow(QMainWindow):
             f"- Paires bloquantes : {len(blocking_pairs)}\n"
             f"- Statut final : {stable_text}\n"
         )
+
         self.summary_global.setPlainText(text)
+
+    # Met à jour la synthèse visuelle avec des barres de progression
+    def update_visual_summary(self, stats: Dict[str, float] = None, blocking_pairs: List[Tuple[str, str]] = None):
+        if stats is None:
+            self.visual_first_label.setText("Premier choix : 0%")
+            self.visual_first_bar.setValue(0)
+
+            self.visual_top3_label.setText("Trois premiers choix : 0%")
+            self.visual_top3_bar.setValue(0)
+
+            self.visual_completion_label.setText("Taux d'affectation : 0%")
+            self.visual_completion_bar.setValue(0)
+
+            self.visual_status_label.setText("Statut : aucune exécution")
+            self.visual_status_label.setStyleSheet("font-weight:700; color:#173b56;")
+            return
+
+        completion_pct = round((len(self.matching) / len(self.students)) * 100, 2) if self.students else 0
+
+        self.visual_first_label.setText(f"Premier choix : {stats['first_choice_pct']}%")
+        self.visual_first_bar.setValue(int(stats["first_choice_pct"]))
+
+        self.visual_top3_label.setText(f"Trois premiers choix : {stats['top3_pct']}%")
+        self.visual_top3_bar.setValue(int(stats["top3_pct"]))
+
+        self.visual_completion_label.setText(f"Taux d'affectation : {completion_pct}%")
+        self.visual_completion_bar.setValue(int(completion_pct))
+
+        if not blocking_pairs:
+            self.visual_status_label.setText("Statut : STABLE")
+            self.visual_status_label.setStyleSheet("font-weight:700; color:green;")
+        else:
+            self.visual_status_label.setText("Statut : INSTABLE")
+            self.visual_status_label.setStyleSheet("font-weight:700; color:red;")
 
     def reset_app(self):
         self.matching = {}
         self.last_proposals = 0
+        self.trace_steps = []
+
         self._fill_result_table()
         self._fill_blocking_table([])
         self.update_summary_bar()
+        self.update_visual_summary()
+
         self.summary_global.setPlainText("Application réinitialisée.")
+        self.trace_text.setPlainText("Application réinitialisée.")
         self.stability_banner.setText("Réinitialisation effectuée. Générez ou rechargez un jeu de données, puis lancez l'affectation.")
         self.analysis_text.setPlainText("Application réinitialisée.")
         self.tabs.setCurrentIndex(0)
@@ -819,9 +1065,11 @@ class MainWindow(QMainWindow):
             return
 
         student_map = {student.name: student for student in self.students}
+
         with open(path, "w", newline="", encoding="utf-8") as file:
             writer = csv.writer(file, delimiter=";")
             writer.writerow(["Étudiant", "Université attribuée", "Profil", "Score", "Rang obtenu"])
+
             for student, university in sorted(self.matching.items()):
                 rank = self.student_prefs[student].index(university) + 1
                 current = student_map[student]
@@ -845,6 +1093,7 @@ class MainWindow(QMainWindow):
             "student_prefs": self.student_prefs,
             "uni_prefs": self.uni_prefs,
         }
+
         with open(path, "w", encoding="utf-8") as file:
             json.dump(data, file, ensure_ascii=False, indent=2)
 
@@ -867,25 +1116,32 @@ class MainWindow(QMainWindow):
         self.universities = [University(**item) for item in data["universities"]]
         self.student_prefs = data["student_prefs"]
         self.uni_prefs = data["uni_prefs"]
+
         self.matching = {}
         self.last_proposals = 0
+        self.trace_steps = []
 
         self.populate_all_tables()
         self.update_summary_bar()
+        self.update_visual_summary()
+        self.trace_text.setPlainText("Jeu de données chargé. Lancez l'affectation pour générer la chronologie.")
         self.stability_banner.setText("Jeu de données chargé. Lancez l'affectation pour contrôler la stabilité.")
         self.summary_global.setPlainText("Jeu de données chargé. Aucune exécution effectuée.")
         self.analysis_text.setPlainText(
             "Jeu de données chargé avec succès.\n\n"
             "Vous pouvez maintenant lancer l'algorithme pour calculer une nouvelle affectation stable."
         )
+
         QMessageBox.information(self, "Chargement réussi", "Les données ont été chargées depuis le fichier JSON.")
 
 
 def main():
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
+
     window = MainWindow()
     window.show()
+
     sys.exit(app.exec_())
 
 
